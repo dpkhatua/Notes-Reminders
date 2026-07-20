@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Notes">
+<meta name="theme-color" content="#2f6f4f">
+<title>Notes & Reminders</title>
+<style>
+  :root{
+    --bg:#f6f7f5;
+    --card:#ffffff;
+    --ink:#1e2320;
+    --muted:#6b756f;
+    --accent:#2f6f4f;
+    --accent-soft:#e6f0ea;
+    --border:#e2e5e2;
+    --danger:#b3492f;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding-bottom:60px;
+  }
+  #app{max-width:640px;margin:0 auto;padding:16px;}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-top:8px;}
+  header h1{font-size:20px;margin:0;font-weight:700;}
+  .header-actions{display:flex;gap:8px;}
+  .icon-btn{
+    background:var(--card);border:1px solid var(--border);color:var(--ink);
+    padding:8px 12px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
+  }
+  .icon-btn:active{background:var(--accent-soft);}
+
+  form.add-form{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  form.add-form input[type=text]{
+    flex:1 1 100%;
+    padding:12px 14px;border:1px solid var(--border);border-radius:10px;
+    font-size:15px;background:var(--card);color:var(--ink);
+  }
+  form.add-form select{
+    flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;
+    font-size:14px;background:var(--card);color:var(--ink);
+  }
+  form.add-form button{
+    background:var(--accent);color:#fff;border:none;padding:10px 16px;
+    border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;
+  }
+
+  .toolbar{margin-bottom:14px;}
+
+  .category{
+    background:var(--card);border:1px solid var(--border);border-radius:12px;
+    margin-bottom:10px;overflow:hidden;
+  }
+  .category.depth-1, .category.depth-2, .category.depth-3{margin-left:16px;margin-top:8px;}
+  .cat-header{
+    display:flex;align-items:center;gap:6px;padding:12px 12px;cursor:pointer;
+  }
+  .cat-toggle{
+    background:none;border:none;font-size:14px;color:var(--muted);cursor:pointer;
+    width:20px;flex:none;
+  }
+  .cat-name{flex:1;font-weight:600;font-size:15px;}
+  .cat-count{
+    font-size:11px;color:var(--muted);background:var(--accent-soft);
+    padding:2px 8px;border-radius:20px;margin-right:4px;
+  }
+  .cat-actions{display:flex;gap:4px;}
+  .mini-btn{
+    background:none;border:none;font-size:15px;padding:4px 6px;cursor:pointer;color:var(--muted);
+  }
+  .mini-btn:active{color:var(--accent);}
+  .cat-body{padding:0 12px 12px 12px;}
+  .cat-children{margin-top:4px;}
+
+  ul.item-list{list-style:none;margin:0;padding:0;}
+  ul.item-list li{
+    display:flex;align-items:flex-start;gap:10px;padding:9px 4px;border-bottom:1px solid var(--border);
+  }
+  ul.item-list li:last-child{border-bottom:none;}
+  .chk{
+    width:22px;height:22px;flex:none;margin-top:2px;accent-color:var(--accent);cursor:pointer;
+  }
+  .item-main{flex:1;min-width:0;}
+  .item-text{font-size:14.5px;word-break:break-word;}
+  .item-meta{font-size:11px;color:var(--muted);margin-top:2px;}
+  .item-del{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:2px 6px;}
+  .item-del:active{color:var(--danger);}
+  .completed .item-text{text-decoration:line-through;color:var(--muted);}
+
+  .completed-toggle{
+    margin-top:8px;background:var(--accent-soft);border:none;color:var(--accent);
+    font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:8px;cursor:pointer;width:100%;text-align:left;
+  }
+  .completed-body{margin-top:6px;}
+
+  .empty-hint{font-size:12.5px;color:var(--muted);padding:6px 4px;font-style:italic;}
+
+  /* Modal */
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(20,25,22,0.45);display:none;
+    align-items:flex-end;justify-content:center;z-index:100;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal-box{
+    background:var(--card);width:100%;max-width:480px;border-radius:16px 16px 0 0;
+    padding:18px;animation:slideup .15s ease-out;
+  }
+  @media (min-width:520px){
+    .modal-overlay{align-items:center;}
+    .modal-box{border-radius:16px;}
+  }
+  @keyframes slideup{from{transform:translateY(30px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  .modal-title{font-size:16px;font-weight:700;margin-bottom:12px;}
+  .modal-body input[type=text], .modal-body select{
+    width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:10px;
+    font-size:15px;margin-bottom:10px;background:var(--bg);color:var(--ink);
+  }
+  .modal-msg{font-size:14px;color:var(--ink);margin-bottom:14px;line-height:1.4;}
+  .modal-footer{display:flex;gap:8px;justify-content:flex-end;}
+  .modal-footer button{
+    padding:10px 16px;border-radius:10px;font-size:14px;font-weight:600;border:none;cursor:pointer;
+  }
+  .btn-cancel{background:var(--bg);color:var(--ink);border:1px solid var(--border) !important;}
+  .btn-confirm{background:var(--accent);color:#fff;}
+  .btn-danger{background:var(--danger);color:#fff;}
+
+  .toast{
+    position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+    background:#1e2320;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;
+    opacity:0;pointer-events:none;transition:opacity .2s;z-index:200;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Notes &amp; Reminders</h1>
+    <div class="header-actions">
+      <button class="icon-btn" id="exportBtn">Export</button>
+      <button class="icon-btn" id="importBtn">Import</button>
+      <input type="file" id="importInput" accept="application/json" hidden>
+    </div>
+  </header>
+
+  <form class="add-form" id="addForm">
+    <input type="text" id="itemText" placeholder="New reminder or note…" required>
+    <select id="itemCategory"></select>
+    <button type="submit">Add</button>
+  </form>
+
+  <div class="toolbar">
+    <button class="icon-btn" id="addCategoryBtn">+ New Category</button>
+  </div>
+
+  <div id="categoryTree"></div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  var STORAGE_KEY = "notesRemindersData_v1";
+
+  function uid(prefix){
+    return prefix + "_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,8);
+  }
+
+  function defaultData(){
+    var names = ["Personal","Work","Job applications","Health"];
+    var cats = names.map(function(n){ return {id: uid("cat"), name: n, parentId: null}; });
+    return {categories: cats, items: [], collapsed: {}};
+  }
+
+  function loadData(){
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      try{
+        var parsed = JSON.parse(raw);
+        if(parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.items)){
+          if(!parsed.collapsed) parsed.collapsed = {};
+          return parsed;
+        }
+      }catch(e){ console.error("Failed to parse saved data", e); }
+    }
+    return defaultData();
+  }
+
+  var data = loadData();
+
+  function saveData(){
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function getChildren(parentId){
+    return data.categories.filter(function(c){ return c.parentId === parentId; });
+  }
+
+  function getDescendantCatIds(catId){
+    var ids = [catId];
+    getChildren(catId).forEach(function(c){
+      ids = ids.concat(getDescendantCatIds(c.id));
+    });
+    return ids;
+  }
+
+  function getItemsFor(catId, completed){
+    return data.items.filter(function(it){ return it.categoryId === catId && it.completed === completed; });
+  }
+
+  function formatDate(iso){
+    if(!iso) return "";
+    var d = new Date(iso);
+    var datePart = d.toLocaleDateString(undefined, {year:"numeric", month:"short", day:"numeric"});
+    var timePart = d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+    return datePart + " " + timePart;
+  }
+
+  function showToast(msg){
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function(){ t.classList.remove("show"); }, 1800);
+  }
+
+  // ---------- Modal ----------
+  var modalOverlay = document.getElementById("modalOverlay");
+  var modalTitle = document.getElementById("modalTitle");
+  var modalBody = document.getElementById("modalBody");
+  var modalFooter = document.getElementById("modalFooter");
+
+  function closeModal(){
+    modalOverlay.classList.remove("open");
+    modalBody.innerHTML = "";
+    modalFooter.innerHTML = "";
+  }
+
+  function openFormModal(opts){
+    // opts: {title, fields:[{id,label,type:'text'|'select',options,placeholder,value}], confirmLabel, onConfirm(values), danger}
+    modalTitle.textContent = opts.title;
+    modalBody.innerHTML = "";
+    var inputs = {};
+    (opts.fields || []).forEach(function(f){
+      if(f.label){
+        var lbl = document.createElement("div");
+        lbl.style.fontSize = "12.5px";
+        lbl.style.color = "var(--muted)";
+        lbl.style.marginBottom = "4px";
+        lbl.textContent = f.label;
+        modalBody.appendChild(lbl);
+      }
+      var el;
+      if(f.type === "select"){
+        el = document.createElement("select");
+        (f.options || []).forEach(function(o){
+          var opt = document.createElement("option");
+          opt.value = o.value;
+          opt.textContent = o.text;
+          el.appendChild(opt);
+        });
+      } else {
+        el = document.createElement("input");
+        el.type = "text";
+        el.placeholder = f.placeholder || "";
+        if(f.value) el.value = f.value;
+      }
+      el.id = "modal_field_" + f.id;
+      modalBody.appendChild(el);
+      inputs[f.id] = el;
+    });
+
+    modalFooter.innerHTML = "";
+    var cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.onclick = closeModal;
+    var confirmBtn = document.createElement("button");
+    confirmBtn.className = opts.danger ? "btn-danger" : "btn-confirm";
+    confirmBtn.textContent = opts.confirmLabel || "Save";
+    confirmBtn.onclick = function(){
+      var values = {};
+      Object.keys(inputs).forEach(function(k){ values[k] = inputs[k].value; });
+      opts.onConfirm(values);
+    };
+    modalFooter.appendChild(cancelBtn);
+    modalFooter.appendChild(confirmBtn);
+    modalOverlay.classList.add("open");
+    var firstInput = modalBody.querySelector("input,select");
+    if(firstInput) setTimeout(function(){ firstInput.focus(); }, 50);
+  }
+
+  function openConfirmModal(opts){
+    // opts: {title, message, confirmLabel, danger, onConfirm}
+    modalTitle.textContent = opts.title;
+    modalBody.innerHTML = "";
+    var msg = document.createElement("div");
+    msg.className = "modal-msg";
+    msg.textContent = opts.message;
+    modalBody.appendChild(msg);
+
+    modalFooter.innerHTML = "";
+    var cancelBtn = document.createElement("button");
+    cancelBtn.className = "btn-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.onclick = closeModal;
+    var confirmBtn = document.createElement("button");
+    confirmBtn.className = opts.danger ? "btn-danger" : "btn-confirm";
+    confirmBtn.textContent = opts.confirmLabel || "OK";
+    confirmBtn.onclick = function(){ opts.onConfirm(); };
+    modalFooter.appendChild(cancelBtn);
+    modalFooter.appendChild(confirmBtn);
+    modalOverlay.classList.add("open");
+  }
+
+  modalOverlay.addEventListener("click", function(e){
+    if(e.target === modalOverlay) closeModal();
+  });
+
+  // ---------- Category select options (flat w/ indent) ----------
+  function fillCategorySelect(selectEl, excludeIds){
+    excludeIds = excludeIds || [];
+    selectEl.innerHTML = "";
+    function walk(parentId, depth){
+      getChildren(parentId).forEach(function(c){
+        if(excludeIds.indexOf(c.id) !== -1) return;
+        var opt = document.createElement("option");
+        opt.value = c.id;
+        var prefix = depth > 0 ? " ".repeat(depth) + "↳ " : "";
+        opt.textContent = prefix + c.name;
+        selectEl.appendChild(opt);
+        walk(c.id, depth + 1);
+      });
+    }
+    walk(null, 0);
+  }
+
+  // ---------- Actions ----------
+  function addItem(text, categoryId){
+    text = (text || "").trim();
+    if(!text || !categoryId) return;
+    data.items.push({
+      id: uid("item"),
+      text: text,
+      categoryId: categoryId,
+      createdAt: new Date().toISOString(),
+      completed: false,
+      completedAt: null
+    });
+    saveData();
+    render();
+  }
+
+  function toggleComplete(itemId, completed){
+    var it = data.items.find(function(i){ return i.id === itemId; });
+    if(!it) return;
+    it.completed = completed;
+    it.completedAt = completed ? new Date().toISOString() : null;
+    saveData();
+    render();
+  }
+
+  function deleteItem(itemId){
+    data.items = data.items.filter(function(i){ return i.id !== itemId; });
+    saveData();
+    render();
+  }
+
+  function addCategory(name, parentId){
+    name = (name || "").trim();
+    if(!name) return;
+    data.categories.push({id: uid("cat"), name: name, parentId: parentId || null});
+    saveData();
+    render();
+  }
+
+  function renameCategory(catId, newName){
+    newName = (newName || "").trim();
+    if(!newName) return;
+    var c = data.categories.find(function(c){ return c.id === catId; });
+    if(c){ c.name = newName; saveData(); render(); }
+  }
+
+  function deleteCategory(catId){
+    var idsToDelete = getDescendantCatIds(catId);
+    data.categories = data.categories.filter(function(c){ return idsToDelete.indexOf(c.id) === -1; });
+    data.items = data.items.filter(function(i){ return idsToDelete.indexOf(i.categoryId) === -1; });
+    saveData();
+    render();
+  }
+
+  function toggleCollapsed(key){
+    data.collapsed[key] = !data.collapsed[key];
+    saveData();
+    render();
+  }
+
+  // ---------- Rendering ----------
+  function renderItemLi(item, isCompleted){
+    var li = document.createElement("li");
+    if(isCompleted) li.className = "completed";
+
+    var chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.className = "chk";
+    chk.checked = !!item.completed;
+    chk.addEventListener("change", function(){
+      toggleComplete(item.id, chk.checked);
+    });
+
+    var main = document.createElement("div");
+    main.className = "item-main";
+    var txt = document.createElement("div");
+    txt.className = "item-text";
+    txt.textContent = item.text;
+    var meta = document.createElement("div");
+    meta.className = "item-meta";
+    if(isCompleted){
+      meta.textContent = "Created " + formatDate(item.createdAt) + " · Completed " + formatDate(item.completedAt);
+    } else {
+      meta.textContent = "Created " + formatDate(item.createdAt);
+    }
+    main.appendChild(txt);
+    main.appendChild(meta);
+
+    var del = document.createElement("button");
+    del.className = "item-del";
+    del.textContent = "×";
+    del.title = "Delete";
+    del.addEventListener("click", function(){
+      openConfirmModal({
+        title: "Delete item?",
+        message: 'Delete "' + item.text + '" permanently? This cannot be undone.',
+        confirmLabel: "Delete",
+        danger: true,
+        onConfirm: function(){ deleteItem(item.id); closeModal(); }
+      });
+    });
+
+    li.appendChild(chk);
+    li.appendChild(main);
+    li.appendChild(del);
+    return li;
+  }
+
+  function renderCategoryNode(cat, depth){
+    var wrap = document.createElement("div");
+    wrap.className = "category depth-" + Math.min(depth, 3);
+
+    var collapsedKey = "cat_" + cat.id;
+    var isCollapsed = !!data.collapsed[collapsedKey];
+
+    var header = document.createElement("div");
+    header.className = "cat-header";
+
+    var toggleBtn = document.createElement("button");
+    toggleBtn.className = "cat-toggle";
+    toggleBtn.textContent = isCollapsed ? "▶" : "▼";
+    toggleBtn.addEventListener("click", function(){ toggleCollapsed(collapsedKey); });
+
+    var nameSpan = document.createElement("div");
+    nameSpan.className = "cat-name";
+    nameSpan.textContent = cat.name;
+
+    var activeCount = getItemsFor(cat.id, false).length;
+    var countSpan = document.createElement("span");
+    countSpan.className = "cat-count";
+    countSpan.textContent = activeCount;
+
+    var actions = document.createElement("div");
+    actions.className = "cat-actions";
+
+    var addItemBtn = document.createElement("button");
+    addItemBtn.className = "mini-btn";
+    addItemBtn.title = "Add reminder here";
+    addItemBtn.textContent = "➕";
+    addItemBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openFormModal({
+        title: "Add to " + cat.name,
+        fields: [{id:"text", label:"Reminder / note", placeholder:"What do you need to remember?"}],
+        confirmLabel: "Add",
+        onConfirm: function(v){
+          if(!v.text || !v.text.trim()) return;
+          addItem(v.text, cat.id);
+          closeModal();
+        }
+      });
+    });
+
+    var addSubBtn = document.createElement("button");
+    addSubBtn.className = "mini-btn";
+    addSubBtn.title = "Add subcategory";
+    addSubBtn.textContent = "📁+";
+    addSubBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openFormModal({
+        title: "New subcategory in " + cat.name,
+        fields: [{id:"name", label:"Subcategory name", placeholder:"e.g. Interviews"}],
+        confirmLabel: "Create",
+        onConfirm: function(v){
+          if(!v.name || !v.name.trim()) return;
+          addCategory(v.name, cat.id);
+          closeModal();
+        }
+      });
+    });
+
+    var renameBtn = document.createElement("button");
+    renameBtn.className = "mini-btn";
+    renameBtn.title = "Rename";
+    renameBtn.textContent = "✎";
+    renameBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openFormModal({
+        title: "Rename category",
+        fields: [{id:"name", label:"Name", value: cat.name}],
+        confirmLabel: "Save",
+        onConfirm: function(v){
+          if(!v.name || !v.name.trim()) return;
+          renameCategory(cat.id, v.name);
+          closeModal();
+        }
+      });
+    });
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "mini-btn";
+    delBtn.title = "Delete category";
+    delBtn.textContent = "🗑";
+    delBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      var childCount = getDescendantCatIds(cat.id).length - 1;
+      var warn = childCount > 0
+        ? ' This will also delete ' + childCount + ' subcategory(ies) and all their items.'
+        : ' All its reminders (active and completed) will be deleted.';
+      openConfirmModal({
+        title: 'Delete "' + cat.name + '"?',
+        message: "This cannot be undone." + warn,
+        confirmLabel: "Delete",
+        danger: true,
+        onConfirm: function(){ deleteCategory(cat.id); closeModal(); }
+      });
+    });
+
+    actions.appendChild(addItemBtn);
+    actions.appendChild(addSubBtn);
+    actions.appendChild(renameBtn);
+    actions.appendChild(delBtn);
+
+    header.appendChild(toggleBtn);
+    header.appendChild(nameSpan);
+    header.appendChild(countSpan);
+    header.appendChild(actions);
+    header.addEventListener("click", function(){ toggleCollapsed(collapsedKey); });
+    // prevent header click firing twice from toggle button (already stops via bubbling naturally fine)
+
+    wrap.appendChild(header);
+
+    if(!isCollapsed){
+      var body = document.createElement("div");
+      body.className = "cat-body";
+
+      var activeItems = getItemsFor(cat.id, false);
+      if(activeItems.length){
+        var ul = document.createElement("ul");
+        ul.className = "item-list";
+        activeItems.forEach(function(it){ ul.appendChild(renderItemLi(it, false)); });
+        body.appendChild(ul);
+      } else {
+        var hint = document.createElement("div");
+        hint.className = "empty-hint";
+        hint.textContent = "Nothing here yet.";
+        body.appendChild(hint);
+      }
+
+      // children subcategories
+      var children = getChildren(cat.id);
+      if(children.length){
+        var childWrap = document.createElement("div");
+        childWrap.className = "cat-children";
+        children.forEach(function(child){
+          childWrap.appendChild(renderCategoryNode(child, depth + 1));
+        });
+        body.appendChild(childWrap);
+      }
+
+      // completed section (items directly in this category only)
+      var completedItems = getItemsFor(cat.id, true);
+      var completedKey = "completed_" + cat.id;
+      var completedOpen = !!data.collapsed[completedKey];
+      var compToggle = document.createElement("button");
+      compToggle.className = "completed-toggle";
+      compToggle.textContent = (completedOpen ? "▼ " : "▶ ") + "Completed (" + completedItems.length + ")";
+      compToggle.addEventListener("click", function(e){
+        e.stopPropagation();
+        toggleCollapsed(completedKey);
+      });
+      body.appendChild(compToggle);
+
+      if(completedOpen){
+        var compBody = document.createElement("div");
+        compBody.className = "completed-body";
+        if(completedItems.length){
+          var cul = document.createElement("ul");
+          cul.className = "item-list";
+          completedItems
+            .slice()
+            .sort(function(a,b){ return new Date(b.completedAt) - new Date(a.completedAt); })
+            .forEach(function(it){ cul.appendChild(renderItemLi(it, true)); });
+          compBody.appendChild(cul);
+        } else {
+          var chint = document.createElement("div");
+          chint.className = "empty-hint";
+          chint.textContent = "No completed items yet.";
+          compBody.appendChild(chint);
+        }
+        body.appendChild(compBody);
+      }
+
+      wrap.appendChild(body);
+    }
+
+    return wrap;
+  }
+
+  function render(){
+    var tree = document.getElementById("categoryTree");
+    tree.innerHTML = "";
+    getChildren(null).forEach(function(cat){
+      tree.appendChild(renderCategoryNode(cat, 0));
+    });
+    fillCategorySelect(document.getElementById("itemCategory"));
+  }
+
+  // ---------- Top-level form handlers ----------
+  document.getElementById("addForm").addEventListener("submit", function(e){
+    e.preventDefault();
+    var textEl = document.getElementById("itemText");
+    var catEl = document.getElementById("itemCategory");
+    if(!catEl.value){
+      showToast("Create a category first");
+      return;
+    }
+    addItem(textEl.value, catEl.value);
+    textEl.value = "";
+    textEl.focus();
+  });
+
+  document.getElementById("addCategoryBtn").addEventListener("click", function(){
+    openFormModal({
+      title: "New category",
+      fields: [{id:"name", label:"Category name", placeholder:"e.g. Travel"}],
+      confirmLabel: "Create",
+      onConfirm: function(v){
+        if(!v.name || !v.name.trim()) return;
+        addCategory(v.name, null);
+        closeModal();
+      }
+    });
+  });
+
+  // ---------- Export / Import ----------
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    var payload = {
+      exportedAt: new Date().toISOString(),
+      categories: data.categories,
+      items: data.items
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    var stamp = new Date().toISOString().slice(0,10);
+    a.href = url;
+    a.download = "notes-backup-" + stamp + ".json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    showToast("Exported");
+  });
+
+  document.getElementById("importBtn").addEventListener("click", function(){
+    document.getElementById("importInput").click();
+  });
+
+  document.getElementById("importInput").addEventListener("change", function(e){
+    var file = e.target.files[0];
+    if(!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        var parsed = JSON.parse(reader.result);
+        if(!parsed || !Array.isArray(parsed.categories) || !Array.isArray(parsed.items)){
+          showToast("Invalid backup file");
+          return;
+        }
+        openConfirmModal({
+          title: "Import backup?",
+          message: "This will replace all current categories and items (" + data.categories.length + " categories, " + data.items.length + " items) with the contents of this file (" + parsed.categories.length + " categories, " + parsed.items.length + " items). This cannot be undone.",
+          confirmLabel: "Replace",
+          danger: true,
+          onConfirm: function(){
+            data = {categories: parsed.categories, items: parsed.items, collapsed: {}};
+            saveData();
+            render();
+            closeModal();
+            showToast("Imported");
+          }
+        });
+      }catch(err){
+        showToast("Could not read file");
+      }
+      e.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+
+  // init
+  render();
+})();
+</script>
+</body>
+</html>
