@@ -29,12 +29,13 @@
     padding-bottom:60px;
   }
   #app{max-width:640px;margin:0 auto;padding:16px;}
-  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-top:8px;}
+  header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;padding-top:8px;flex-wrap:wrap;gap:8px;}
   header h1{font-size:20px;margin:0;font-weight:700;}
-  .header-actions{display:flex;gap:8px;}
+  .header-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;}
   .icon-btn{
     background:var(--card);border:1px solid var(--border);color:var(--ink);
-    padding:8px 12px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
+    padding:8px 12px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;
+    max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   }
   .icon-btn:active{background:var(--accent-soft);}
 
@@ -103,6 +104,14 @@
 
   .empty-hint{font-size:12.5px;color:var(--muted);padding:6px 4px;font-style:italic;}
 
+  .section-header{display:flex;align-items:center;justify-content:space-between;margin:26px 0 4px;}
+  .section-header h2{font-size:13px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .section-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px;}
+
+  .checklist{border-left:4px solid var(--accent);}
+  ul.item-list li.checked{background:var(--accent-soft);border-radius:8px;padding-left:6px;}
+  ul.item-list li.checked .item-text{color:var(--accent);}
+
   /* Modal */
   .modal-overlay{
     position:fixed;inset:0;background:rgba(20,25,22,0.45);display:none;
@@ -145,6 +154,7 @@
   <header>
     <h1>Notes &amp; Reminders</h1>
     <div class="header-actions">
+      <button class="icon-btn" id="folderBtn" title="Auto-save to a local folder">🔗 Connect folder</button>
       <button class="icon-btn" id="exportBtn">Export</button>
       <button class="icon-btn" id="importBtn">Import</button>
       <input type="file" id="importInput" accept="application/json" hidden>
@@ -162,6 +172,14 @@
   </div>
 
   <div id="categoryTree"></div>
+
+  <div class="section-header">
+    <h2>Checklists</h2>
+    <button class="icon-btn" id="addChecklistBtn">+ New Checklist</button>
+  </div>
+  <div class="section-sub">For packing lists, document submissions, etc. — items stay checked or unchecked in place, nothing moves away.</div>
+
+  <div id="checklistTree"></div>
 </div>
 
 <div class="modal-overlay" id="modalOverlay">
@@ -187,7 +205,7 @@
   function defaultData(){
     var names = ["Personal","Work","Job applications","Health"];
     var cats = names.map(function(n){ return {id: uid("cat"), name: n, parentId: null}; });
-    return {categories: cats, items: [], collapsed: {}};
+    return {categories: cats, items: [], checklists: [], checklistItems: [], collapsed: {}};
   }
 
   function loadData(){
@@ -197,6 +215,8 @@
         var parsed = JSON.parse(raw);
         if(parsed && Array.isArray(parsed.categories) && Array.isArray(parsed.items)){
           if(!parsed.collapsed) parsed.collapsed = {};
+          if(!Array.isArray(parsed.checklists)) parsed.checklists = [];
+          if(!Array.isArray(parsed.checklistItems)) parsed.checklistItems = [];
           return parsed;
         }
       }catch(e){ console.error("Failed to parse saved data", e); }
@@ -205,10 +225,20 @@
   }
 
   var data = loadData();
+  var saveDirHandle = null;
+  var autoSaveEnabled = false;
 
-  function saveData(){
+  function persistLocal(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   }
+
+  function dataChanged(){
+    persistLocal();
+    if(autoSaveEnabled) writeAutoSaveFile();
+  }
+
+  // kept for any older call sites; treat as a full data change
+  function saveData(){ dataChanged(); }
 
   function getChildren(parentId){
     return data.categories.filter(function(c){ return c.parentId === parentId; });
@@ -365,7 +395,7 @@
       completed: false,
       completedAt: null
     });
-    saveData();
+    dataChanged();
     render();
   }
 
@@ -374,13 +404,13 @@
     if(!it) return;
     it.completed = completed;
     it.completedAt = completed ? new Date().toISOString() : null;
-    saveData();
+    dataChanged();
     render();
   }
 
   function deleteItem(itemId){
     data.items = data.items.filter(function(i){ return i.id !== itemId; });
-    saveData();
+    dataChanged();
     render();
   }
 
@@ -388,7 +418,7 @@
     name = (name || "").trim();
     if(!name) return;
     data.categories.push({id: uid("cat"), name: name, parentId: parentId || null});
-    saveData();
+    dataChanged();
     render();
   }
 
@@ -396,20 +426,73 @@
     newName = (newName || "").trim();
     if(!newName) return;
     var c = data.categories.find(function(c){ return c.id === catId; });
-    if(c){ c.name = newName; saveData(); render(); }
+    if(c){ c.name = newName; dataChanged(); render(); }
   }
 
   function deleteCategory(catId){
     var idsToDelete = getDescendantCatIds(catId);
     data.categories = data.categories.filter(function(c){ return idsToDelete.indexOf(c.id) === -1; });
     data.items = data.items.filter(function(i){ return idsToDelete.indexOf(i.categoryId) === -1; });
-    saveData();
+    dataChanged();
     render();
   }
 
   function toggleCollapsed(key){
     data.collapsed[key] = !data.collapsed[key];
-    saveData();
+    persistLocal();
+    render();
+  }
+
+  // ---------- Checklists (items stay in place, checked or not — no completed list) ----------
+  function addChecklist(name){
+    name = (name || "").trim();
+    if(!name) return;
+    data.checklists.push({id: uid("chk"), name: name});
+    dataChanged();
+    render();
+  }
+
+  function renameChecklist(checklistId, newName){
+    newName = (newName || "").trim();
+    if(!newName) return;
+    var c = data.checklists.find(function(c){ return c.id === checklistId; });
+    if(c){ c.name = newName; dataChanged(); render(); }
+  }
+
+  function deleteChecklist(checklistId){
+    data.checklists = data.checklists.filter(function(c){ return c.id !== checklistId; });
+    data.checklistItems = data.checklistItems.filter(function(i){ return i.checklistId !== checklistId; });
+    dataChanged();
+    render();
+  }
+
+  function resetChecklist(checklistId){
+    data.checklistItems.forEach(function(i){
+      if(i.checklistId === checklistId) i.checked = false;
+    });
+    dataChanged();
+    render();
+  }
+
+  function addChecklistItem(checklistId, text){
+    text = (text || "").trim();
+    if(!text || !checklistId) return;
+    data.checklistItems.push({id: uid("citem"), checklistId: checklistId, text: text, checked: false});
+    dataChanged();
+    render();
+  }
+
+  function toggleChecklistItem(itemId, checked){
+    var it = data.checklistItems.find(function(i){ return i.id === itemId; });
+    if(!it) return;
+    it.checked = checked;
+    dataChanged();
+    render();
+  }
+
+  function deleteChecklistItem(itemId){
+    data.checklistItems = data.checklistItems.filter(function(i){ return i.id !== itemId; });
+    dataChanged();
     render();
   }
 
@@ -642,6 +725,171 @@
     return wrap;
   }
 
+  function renderChecklistItemLi(item){
+    var li = document.createElement("li");
+    if(item.checked) li.className = "checked";
+
+    var chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.className = "chk";
+    chk.checked = !!item.checked;
+    chk.addEventListener("change", function(){
+      toggleChecklistItem(item.id, chk.checked);
+    });
+
+    var main = document.createElement("div");
+    main.className = "item-main";
+    var txt = document.createElement("div");
+    txt.className = "item-text";
+    txt.textContent = item.text;
+    main.appendChild(txt);
+
+    var del = document.createElement("button");
+    del.className = "item-del";
+    del.textContent = "×";
+    del.title = "Remove";
+    del.addEventListener("click", function(){
+      openConfirmModal({
+        title: "Remove item?",
+        message: 'Remove "' + item.text + '" from this checklist? This cannot be undone.',
+        confirmLabel: "Remove",
+        danger: true,
+        onConfirm: function(){ deleteChecklistItem(item.id); closeModal(); }
+      });
+    });
+
+    li.appendChild(chk);
+    li.appendChild(main);
+    li.appendChild(del);
+    return li;
+  }
+
+  function renderChecklistNode(checklist){
+    var wrap = document.createElement("div");
+    wrap.className = "category checklist";
+
+    var collapsedKey = "chk_" + checklist.id;
+    var isCollapsed = !!data.collapsed[collapsedKey];
+    var items = data.checklistItems.filter(function(i){ return i.checklistId === checklist.id; });
+    var checkedCount = items.filter(function(i){ return i.checked; }).length;
+
+    var header = document.createElement("div");
+    header.className = "cat-header";
+
+    var toggleBtn = document.createElement("button");
+    toggleBtn.className = "cat-toggle";
+    toggleBtn.textContent = isCollapsed ? "▶" : "▼";
+    toggleBtn.addEventListener("click", function(){ toggleCollapsed(collapsedKey); });
+
+    var nameSpan = document.createElement("div");
+    nameSpan.className = "cat-name";
+    nameSpan.textContent = checklist.name;
+
+    var countSpan = document.createElement("span");
+    countSpan.className = "cat-count";
+    countSpan.textContent = checkedCount + " / " + items.length;
+
+    var actions = document.createElement("div");
+    actions.className = "cat-actions";
+
+    var addItemBtn = document.createElement("button");
+    addItemBtn.className = "mini-btn";
+    addItemBtn.title = "Add item";
+    addItemBtn.textContent = "➕";
+    addItemBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openFormModal({
+        title: "Add to " + checklist.name,
+        fields: [{id:"text", label:"Item", placeholder:"e.g. Passport"}],
+        confirmLabel: "Add",
+        onConfirm: function(v){
+          if(!v.text || !v.text.trim()) return;
+          addChecklistItem(checklist.id, v.text);
+          closeModal();
+        }
+      });
+    });
+
+    var resetBtn = document.createElement("button");
+    resetBtn.className = "mini-btn";
+    resetBtn.title = "Uncheck all (reuse this checklist)";
+    resetBtn.textContent = "↺";
+    resetBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openConfirmModal({
+        title: "Reset checklist?",
+        message: 'Uncheck all items in "' + checklist.name + '"? Items themselves won\'t be removed.',
+        confirmLabel: "Reset",
+        onConfirm: function(){ resetChecklist(checklist.id); closeModal(); }
+      });
+    });
+
+    var renameBtn = document.createElement("button");
+    renameBtn.className = "mini-btn";
+    renameBtn.title = "Rename";
+    renameBtn.textContent = "✎";
+    renameBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openFormModal({
+        title: "Rename checklist",
+        fields: [{id:"name", label:"Name", value: checklist.name}],
+        confirmLabel: "Save",
+        onConfirm: function(v){
+          if(!v.name || !v.name.trim()) return;
+          renameChecklist(checklist.id, v.name);
+          closeModal();
+        }
+      });
+    });
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "mini-btn";
+    delBtn.title = "Delete checklist";
+    delBtn.textContent = "🗑";
+    delBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      openConfirmModal({
+        title: 'Delete "' + checklist.name + '"?',
+        message: "This cannot be undone. All " + items.length + " item(s) in this checklist will be deleted.",
+        confirmLabel: "Delete",
+        danger: true,
+        onConfirm: function(){ deleteChecklist(checklist.id); closeModal(); }
+      });
+    });
+
+    actions.appendChild(addItemBtn);
+    actions.appendChild(resetBtn);
+    actions.appendChild(renameBtn);
+    actions.appendChild(delBtn);
+
+    header.appendChild(toggleBtn);
+    header.appendChild(nameSpan);
+    header.appendChild(countSpan);
+    header.appendChild(actions);
+    header.addEventListener("click", function(){ toggleCollapsed(collapsedKey); });
+
+    wrap.appendChild(header);
+
+    if(!isCollapsed){
+      var body = document.createElement("div");
+      body.className = "cat-body";
+      if(items.length){
+        var ul = document.createElement("ul");
+        ul.className = "item-list";
+        items.forEach(function(it){ ul.appendChild(renderChecklistItemLi(it)); });
+        body.appendChild(ul);
+      } else {
+        var hint = document.createElement("div");
+        hint.className = "empty-hint";
+        hint.textContent = "No items yet — tap ➕ to add some.";
+        body.appendChild(hint);
+      }
+      wrap.appendChild(body);
+    }
+
+    return wrap;
+  }
+
   function render(){
     var tree = document.getElementById("categoryTree");
     tree.innerHTML = "";
@@ -649,6 +897,18 @@
       tree.appendChild(renderCategoryNode(cat, 0));
     });
     fillCategorySelect(document.getElementById("itemCategory"));
+
+    var checklistTree = document.getElementById("checklistTree");
+    checklistTree.innerHTML = "";
+    data.checklists.forEach(function(cl){
+      checklistTree.appendChild(renderChecklistNode(cl));
+    });
+    if(!data.checklists.length){
+      var hint = document.createElement("div");
+      hint.className = "empty-hint";
+      hint.textContent = "No checklists yet — tap “+ New Checklist” for things like packing lists or document submissions.";
+      checklistTree.appendChild(hint);
+    }
   }
 
   // ---------- Top-level form handlers ----------
@@ -678,12 +938,27 @@
     });
   });
 
+  document.getElementById("addChecklistBtn").addEventListener("click", function(){
+    openFormModal({
+      title: "New checklist",
+      fields: [{id:"name", label:"Checklist name", placeholder:"e.g. Japan Trip Packing"}],
+      confirmLabel: "Create",
+      onConfirm: function(v){
+        if(!v.name || !v.name.trim()) return;
+        addChecklist(v.name);
+        closeModal();
+      }
+    });
+  });
+
   // ---------- Export / Import ----------
   document.getElementById("exportBtn").addEventListener("click", function(){
     var payload = {
       exportedAt: new Date().toISOString(),
       categories: data.categories,
-      items: data.items
+      items: data.items,
+      checklists: data.checklists,
+      checklistItems: data.checklistItems
     };
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
     var url = URL.createObjectURL(blob);
@@ -719,8 +994,14 @@
           confirmLabel: "Replace",
           danger: true,
           onConfirm: function(){
-            data = {categories: parsed.categories, items: parsed.items, collapsed: {}};
-            saveData();
+            data = {
+              categories: parsed.categories,
+              items: parsed.items,
+              checklists: Array.isArray(parsed.checklists) ? parsed.checklists : [],
+              checklistItems: Array.isArray(parsed.checklistItems) ? parsed.checklistItems : [],
+              collapsed: {}
+            };
+            dataChanged();
             render();
             closeModal();
             showToast("Imported");
@@ -734,8 +1015,204 @@
     reader.readAsText(file);
   });
 
+  // ---------- Local folder auto-save (JSON + CSV) ----------
+  var IDB_NAME = "notesRemindersHandles";
+  var IDB_STORE = "handles";
+
+  function idbOpen(){
+    return new Promise(function(resolve, reject){
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function(){ req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  }
+  function idbSet(key, value){
+    return idbOpen().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = function(){ resolve(); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+  function idbGet(key){
+    return idbOpen().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDB_STORE, "readonly");
+        var req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = function(){ resolve(req.result); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+
+  function csvEscape(val){
+    val = val === null || val === undefined ? "" : String(val);
+    if(/[",\n]/.test(val)){
+      val = '"' + val.replace(/"/g, '""') + '"';
+    }
+    return val;
+  }
+
+  function getCategoryPath(catId){
+    var parts = [];
+    var cur = data.categories.find(function(c){ return c.id === catId; });
+    while(cur){
+      parts.unshift(cur.name);
+      cur = cur.parentId ? data.categories.find(function(c){ return c.id === cur.parentId; }) : null;
+    }
+    return parts.join(" > ");
+  }
+
+  function buildCSV(){
+    var rows = [["Section", "Category / Checklist", "Item", "Status", "Created At", "Completed At"]];
+    data.items.forEach(function(it){
+      rows.push([
+        "Reminder",
+        getCategoryPath(it.categoryId),
+        it.text,
+        it.completed ? "Completed" : "Active",
+        formatDate(it.createdAt),
+        it.completed ? formatDate(it.completedAt) : ""
+      ]);
+    });
+    data.checklistItems.forEach(function(it){
+      var cl = data.checklists.find(function(c){ return c.id === it.checklistId; });
+      rows.push([
+        "Checklist",
+        cl ? cl.name : "",
+        it.text,
+        it.checked ? "Checked" : "Unchecked",
+        "",
+        ""
+      ]);
+    });
+    return rows.map(function(r){ return r.map(csvEscape).join(","); }).join("\r\n");
+  }
+
+  function updateAutoSaveStatus(){
+    var btn = document.getElementById("folderBtn");
+    if(!btn) return;
+    if(!("showDirectoryPicker" in window)){
+      btn.style.display = "none";
+      return;
+    }
+    if(!saveDirHandle){
+      btn.textContent = "🔗 Connect folder";
+      btn.title = "Auto-save your data as JSON + CSV to a folder on this device";
+      return;
+    }
+    saveDirHandle.queryPermission({mode: "readwrite"}).then(function(perm){
+      if(perm === "granted"){
+        autoSaveEnabled = true;
+        btn.textContent = "✅ " + saveDirHandle.name;
+        btn.title = "Auto-saving here. Click to disconnect.";
+      } else {
+        autoSaveEnabled = false;
+        btn.textContent = "🔗 Reconnect folder";
+        btn.title = "Click to restore auto-save permission for \"" + saveDirHandle.name + "\"";
+      }
+    }).catch(function(){});
+  }
+
+  function writeAutoSaveFile(){
+    if(!saveDirHandle) return Promise.resolve();
+    return saveDirHandle.queryPermission({mode: "readwrite"}).then(function(perm){
+      if(perm !== "granted") return;
+      var payload = {
+        exportedAt: new Date().toISOString(),
+        categories: data.categories,
+        items: data.items,
+        checklists: data.checklists,
+        checklistItems: data.checklistItems
+      };
+      return saveDirHandle.getFileHandle("notes-reminders-data.json", {create: true})
+        .then(function(fh){ return fh.createWritable(); })
+        .then(function(w){ return w.write(JSON.stringify(payload, null, 2)).then(function(){ return w.close(); }); })
+        .then(function(){
+          return saveDirHandle.getFileHandle("notes-reminders-data.csv", {create: true});
+        })
+        .then(function(fh){ return fh.createWritable(); })
+        .then(function(w){ return w.write(buildCSV()).then(function(){ return w.close(); }); });
+    }).catch(function(err){
+      console.error("Auto-save failed", err);
+      showToast("Auto-save failed — check folder access");
+    });
+  }
+
+  function connectNewFolder(){
+    if(!("showDirectoryPicker" in window)){
+      showToast("This browser doesn't support folder auto-save. Use Export instead.");
+      return;
+    }
+    window.showDirectoryPicker({mode: "readwrite"}).then(function(handle){
+      saveDirHandle = handle;
+      autoSaveEnabled = true;
+      return idbSet("saveDir", handle).then(function(){ return writeAutoSaveFile(); });
+    }).then(function(){
+      if(saveDirHandle){
+        updateAutoSaveStatus();
+        showToast('Connected to "' + saveDirHandle.name + '" — auto-saving JSON + CSV here');
+      }
+    }).catch(function(err){
+      if(err && err.name !== "AbortError") showToast("Could not connect folder");
+    });
+  }
+
+  function handleFolderButtonClick(){
+    if(saveDirHandle){
+      saveDirHandle.queryPermission({mode: "readwrite"}).then(function(perm){
+        if(perm === "granted"){
+          openConfirmModal({
+            title: "Disconnect folder?",
+            message: 'Stop auto-saving to "' + saveDirHandle.name + '"? Your existing files stay put — you can reconnect anytime, or export/import manually.',
+            confirmLabel: "Disconnect",
+            danger: true,
+            onConfirm: function(){
+              saveDirHandle = null;
+              autoSaveEnabled = false;
+              idbSet("saveDir", null);
+              updateAutoSaveStatus();
+              closeModal();
+              showToast("Disconnected");
+            }
+          });
+        } else {
+          saveDirHandle.requestPermission({mode: "readwrite"}).then(function(newPerm){
+            if(newPerm === "granted"){
+              autoSaveEnabled = true;
+              updateAutoSaveStatus();
+              writeAutoSaveFile();
+              showToast('Reconnected — auto-saving to "' + saveDirHandle.name + '"');
+            } else {
+              showToast("Permission denied");
+            }
+          }).catch(function(){ connectNewFolder(); });
+        }
+      });
+    } else {
+      connectNewFolder();
+    }
+  }
+
+  function tryRestoreFolder(){
+    idbGet("saveDir").then(function(handle){
+      if(handle){
+        saveDirHandle = handle;
+      }
+      updateAutoSaveStatus();
+    }).catch(function(){ updateAutoSaveStatus(); });
+  }
+
+  var folderBtnEl = document.getElementById("folderBtn");
+  if(folderBtnEl) folderBtnEl.addEventListener("click", handleFolderButtonClick);
+
   // init
   render();
+  updateAutoSaveStatus();
+  tryRestoreFolder();
 })();
 </script>
 </body>
