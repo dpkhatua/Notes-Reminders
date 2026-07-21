@@ -10,7 +10,13 @@ A single-file, mobile-friendly notes/reminders app. No install, no server, no ac
 - Unlimited **subcategories** — add a subcategory under any category (or under a subcategory) to organize further.
 - Every category has its own **Completed** section you can open anytime to review what you've finished.
 - **Export** your data as a JSON file (e.g. to save to Google Drive, email to yourself, or AirDrop) and **Import** it on another device to carry your notes with you.
+- **🔗 Connect folder** (desktop Chrome/Edge only): pick a folder on your computer once, and the app automatically keeps `notes-reminders-data.json` and `notes-reminders-data.csv` updated in that folder every time you add, check off, or edit something — no manual export needed. Point it at a Dropbox/Google Drive/iCloud-synced folder and it's accessible from anywhere automatically.
 - All data is stored locally in the browser (`localStorage`) — nothing is sent anywhere.
+- **Checklists** (separate from categories): for one-off lists like trip packing or document submissions. Create as many as you need, add items, check them off — items stay in the list whether checked or not, nothing moves away. Use the ↺ button to uncheck everything and reuse the list next time.
+
+## Notes on auto-save
+
+The Connect folder feature uses the browser's File System Access API, which only works in Chrome/Edge on desktop (not Safari, not Firefox, not mobile browsers). On unsupported browsers the button is hidden automatically — use Export/Import there instead.
 
 ## Using it on your phone
 
