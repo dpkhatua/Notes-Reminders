@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Notes">
 <meta name="theme-color" content="#2f6f4f">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <title>Notes & Reminders</title>
 <style>
   :root{
@@ -141,6 +144,14 @@
   .btn-confirm{background:var(--accent);color:#fff;}
   .btn-danger{background:var(--danger);color:#fff;}
 
+  .drive-row{display:flex;flex-direction:column;gap:8px;margin-bottom:4px;}
+  .drive-btn{width:100%;padding:12px;border-radius:10px;border:none;font-weight:600;font-size:14px;cursor:pointer;}
+  .drive-btn.primary{background:var(--accent);color:#fff;}
+  .drive-btn.secondary{background:var(--bg);border:1px solid var(--border) !important;color:var(--ink);}
+  .drive-btn:disabled{opacity:.55;cursor:default;}
+  .drive-status{font-size:12.5px;color:var(--muted);margin:2px 0 12px;line-height:1.5;}
+  .drive-link{color:var(--accent);text-decoration:underline;cursor:pointer;background:none;border:none;font-size:12.5px;padding:0;}
+
   .toast{
     position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
     background:#1e2320;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;
@@ -155,6 +166,7 @@
     <h1>Notes &amp; Reminders</h1>
     <div class="header-actions">
       <button class="icon-btn" id="folderBtn" title="Auto-save to a local folder">🔗 Connect folder</button>
+      <button class="icon-btn" id="driveBtn" title="Backup to Google Drive">☁️ Drive Backup</button>
       <button class="icon-btn" id="exportBtn">Export</button>
       <button class="icon-btn" id="importBtn">Import</button>
       <input type="file" id="importInput" accept="application/json" hidden>
@@ -952,14 +964,18 @@
   });
 
   // ---------- Export / Import ----------
-  document.getElementById("exportBtn").addEventListener("click", function(){
-    var payload = {
+  function buildExportPayload(){
+    return {
       exportedAt: new Date().toISOString(),
       categories: data.categories,
       items: data.items,
       checklists: data.checklists,
       checklistItems: data.checklistItems
     };
+  }
+
+  document.getElementById("exportBtn").addEventListener("click", function(){
+    var payload = buildExportPayload();
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -1121,13 +1137,7 @@
     if(!saveDirHandle) return Promise.resolve();
     return saveDirHandle.queryPermission({mode: "readwrite"}).then(function(perm){
       if(perm !== "granted") return;
-      var payload = {
-        exportedAt: new Date().toISOString(),
-        categories: data.categories,
-        items: data.items,
-        checklists: data.checklists,
-        checklistItems: data.checklistItems
-      };
+      var payload = buildExportPayload();
       return saveDirHandle.getFileHandle("notes-reminders-data.json", {create: true})
         .then(function(fh){ return fh.createWritable(); })
         .then(function(w){ return w.write(JSON.stringify(payload, null, 2)).then(function(){ return w.close(); }); })
@@ -1208,6 +1218,349 @@
 
   var folderBtnEl = document.getElementById("folderBtn");
   if(folderBtnEl) folderBtnEl.addEventListener("click", handleFolderButtonClick);
+
+  // ---------- Google Drive backup ----------
+  var GIS_SRC = "https://accounts.google.com/gsi/client";
+  var DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+  var DRIVE_FILE_NAME = "notes-reminders-backup.json";
+  // Baked-in Client ID from Google Cloud Console — no need to paste it in the app.
+  // To use a different one, either edit this line or use "Change" in the Drive panel
+  // (a locally-saved override always takes priority over this default).
+  var DRIVE_CLIENT_ID_DEFAULT = "383914037063-7j0fpcpltj1dlvglhrsn27inf1h9juff.apps.googleusercontent.com";
+
+  var driveAccessToken = null;
+  var driveTokenExpiresAt = 0;
+  var driveTokenClient = null;
+  var driveBusy = false;
+  var driveShowIdInput = false;
+
+  function driveGetClientId(){ return localStorage.getItem("driveClientId") || DRIVE_CLIENT_ID_DEFAULT; }
+  function driveGetFileId(){ return localStorage.getItem("driveFileId") || ""; }
+  function driveGetLastBackupAt(){ return localStorage.getItem("driveLastBackupAt") || ""; }
+
+  function loadGisScript(){
+    if(window.google && window.google.accounts && window.google.accounts.oauth2){
+      return Promise.resolve();
+    }
+    if(!navigator.onLine){
+      return Promise.reject(new Error("You're offline — Drive backup needs an internet connection."));
+    }
+    return new Promise(function(resolve, reject){
+      var existing = document.querySelector('script[data-gis="1"]');
+      if(existing){
+        existing.addEventListener("load", function(){ resolve(); });
+        existing.addEventListener("error", function(){ reject(new Error("Couldn't load Google's sign-in script. Check your connection.")); });
+        return;
+      }
+      var s = document.createElement("script");
+      s.src = GIS_SRC;
+      s.async = true;
+      s.dataset.gis = "1";
+      s.onload = function(){ resolve(); };
+      s.onerror = function(){ reject(new Error("Couldn't load Google's sign-in script. Check your connection.")); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function driveSignIn(clientId){
+    return loadGisScript().then(function(){
+      return new Promise(function(resolve, reject){
+        if(!driveTokenClient){
+          driveTokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: clientId,
+            scope: DRIVE_SCOPE,
+            callback: function(){}
+          });
+        }
+        driveTokenClient.callback = function(resp){
+          if(resp && resp.error){
+            reject(new Error(resp.error_description || resp.error));
+            return;
+          }
+          driveAccessToken = resp.access_token;
+          driveTokenExpiresAt = Date.now() + (Number(resp.expires_in || 3600) * 1000);
+          resolve(driveAccessToken);
+        };
+        try{
+          driveTokenClient.requestAccessToken({hint: ""});
+        }catch(err){
+          reject(err);
+        }
+      });
+    });
+  }
+
+  function driveGetValidToken(){
+    var clientId = driveGetClientId();
+    if(!clientId) return Promise.reject(new Error("Add your Google OAuth Client ID first."));
+    if(driveAccessToken && driveTokenExpiresAt - 30000 > Date.now()){
+      return Promise.resolve(driveAccessToken);
+    }
+    return driveSignIn(clientId);
+  }
+
+  function driveApiFetch(url, options){
+    return driveGetValidToken().then(function(token){
+      options = options || {};
+      options.headers = Object.assign({}, options.headers, {Authorization: "Bearer " + token});
+      return fetch(url, options).then(function(res){
+        if(res.status === 401){
+          driveAccessToken = null;
+          throw new Error("Google sign-in expired. Try again.");
+        }
+        return res;
+      });
+    });
+  }
+
+  function driveFindExistingFileId(){
+    var q = encodeURIComponent("name = '" + DRIVE_FILE_NAME + "' and trashed = false");
+    var url = "https://www.googleapis.com/drive/v3/files?q=" + q + "&fields=files(id,name)&spaces=drive";
+    return driveApiFetch(url).then(function(res){ return res.json(); }).then(function(json){
+      if(json.files && json.files.length){
+        return json.files[0].id;
+      }
+      return null;
+    });
+  }
+
+  function driveCreateFile(){
+    return driveApiFetch("https://www.googleapis.com/drive/v3/files", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: DRIVE_FILE_NAME, mimeType: "application/json"})
+    }).then(function(res){ return res.json(); }).then(function(json){ return json.id; });
+  }
+
+  function driveEnsureFileId(){
+    var existing = driveGetFileId();
+    if(existing) return Promise.resolve(existing);
+    return driveFindExistingFileId().then(function(id){
+      if(id){
+        localStorage.setItem("driveFileId", id);
+        return id;
+      }
+      return driveCreateFile().then(function(newId){
+        localStorage.setItem("driveFileId", newId);
+        return newId;
+      });
+    });
+  }
+
+  function driveBackupNow(){
+    return driveEnsureFileId().then(function(fileId){
+      var content = JSON.stringify(buildExportPayload(), null, 2);
+      return driveApiFetch("https://www.googleapis.com/upload/drive/v3/files/" + fileId + "?uploadType=media", {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: content
+      });
+    }).then(function(){
+      localStorage.setItem("driveLastBackupAt", new Date().toISOString());
+    });
+  }
+
+  function driveRestoreLatest(){
+    var fileId = driveGetFileId();
+    if(!fileId){
+      return Promise.reject(new Error("No Drive backup found yet — run \"Backup now\" at least once first."));
+    }
+    return driveApiFetch("https://www.googleapis.com/drive/v3/files/" + fileId + "?alt=media")
+      .then(function(res){ return res.json(); });
+  }
+
+  // ---- Drive modal UI ----
+  function renderDrivePanel(){
+    modalTitle.textContent = "Google Drive Backup";
+    modalBody.innerHTML = "";
+    modalFooter.innerHTML = "";
+
+    var clientId = driveGetClientId();
+
+    if(driveShowIdInput){
+      var info = document.createElement("div");
+      info.className = "drive-status";
+      info.textContent = "Paste a different Google OAuth Client ID to use instead of the built-in one (see the README for how to create one).";
+      modalBody.appendChild(info);
+
+      var input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "xxxxx.apps.googleusercontent.com";
+      input.value = localStorage.getItem("driveClientId") || "";
+      modalBody.appendChild(input);
+
+      var row = document.createElement("div");
+      row.className = "drive-row";
+      var saveBtn = document.createElement("button");
+      saveBtn.className = "drive-btn primary";
+      saveBtn.textContent = "Save Client ID";
+      saveBtn.addEventListener("click", function(){
+        var v = input.value.trim();
+        if(!v){ showToast("Enter a Client ID first"); return; }
+        localStorage.setItem("driveClientId", v);
+        localStorage.removeItem("driveFileId");
+        driveAccessToken = null;
+        driveTokenClient = null;
+        driveShowIdInput = false;
+        renderDrivePanel();
+      });
+      row.appendChild(saveBtn);
+
+      if(localStorage.getItem("driveClientId")){
+        var resetBtn = document.createElement("button");
+        resetBtn.className = "drive-btn secondary";
+        resetBtn.textContent = "Use built-in Client ID instead";
+        resetBtn.addEventListener("click", function(){
+          localStorage.removeItem("driveClientId");
+          localStorage.removeItem("driveFileId");
+          driveAccessToken = null;
+          driveTokenClient = null;
+          driveShowIdInput = false;
+          renderDrivePanel();
+        });
+        row.appendChild(resetBtn);
+      }
+      modalBody.appendChild(row);
+    } else {
+      var idLine = document.createElement("div");
+      idLine.className = "drive-status";
+      var shortId = clientId.length > 18 ? clientId.slice(0, 10) + "…" + clientId.slice(-8) : clientId;
+      idLine.textContent = "Client ID: " + shortId + " ";
+      var changeBtn = document.createElement("button");
+      changeBtn.className = "drive-link";
+      changeBtn.textContent = "Change";
+      changeBtn.addEventListener("click", function(){
+        driveShowIdInput = true;
+        renderDrivePanel();
+      });
+      idLine.appendChild(changeBtn);
+      modalBody.appendChild(idLine);
+
+      var signedIn = !!driveAccessToken && driveTokenExpiresAt > Date.now();
+      var statusLine = document.createElement("div");
+      statusLine.className = "drive-status";
+      var lastBackup = driveGetLastBackupAt();
+      statusLine.textContent = (signedIn ? "Signed in ✓" : "Not signed in yet") +
+        (lastBackup ? " · Last backup: " + formatDate(lastBackup) : " · No backup yet");
+      modalBody.appendChild(statusLine);
+
+      var row = document.createElement("div");
+      row.className = "drive-row";
+
+      if(!signedIn){
+        var signInBtn = document.createElement("button");
+        signInBtn.className = "drive-btn primary";
+        signInBtn.textContent = "Sign in with Google";
+        signInBtn.addEventListener("click", function(){
+          signInBtn.disabled = true;
+          signInBtn.textContent = "Opening Google sign-in…";
+          driveSignIn(clientId).then(function(){
+            showToast("Signed in");
+            renderDrivePanel();
+          }).catch(function(err){
+            showToast(err.message || "Sign-in failed");
+            renderDrivePanel();
+          });
+        });
+        row.appendChild(signInBtn);
+      } else {
+        var backupBtn = document.createElement("button");
+        backupBtn.className = "drive-btn primary";
+        backupBtn.textContent = "Backup now";
+        backupBtn.disabled = driveBusy;
+        backupBtn.addEventListener("click", function(){
+          driveBusy = true;
+          backupBtn.disabled = true;
+          backupBtn.textContent = "Backing up…";
+          driveBackupNow().then(function(){
+            driveBusy = false;
+            showToast("Backed up to Drive");
+            renderDrivePanel();
+          }).catch(function(err){
+            driveBusy = false;
+            showToast(err.message || "Backup failed");
+            renderDrivePanel();
+          });
+        });
+        row.appendChild(backupBtn);
+
+        var restoreBtn = document.createElement("button");
+        restoreBtn.className = "drive-btn secondary";
+        restoreBtn.textContent = "Restore latest backup";
+        restoreBtn.addEventListener("click", function(){
+          restoreBtn.disabled = true;
+          restoreBtn.textContent = "Fetching…";
+          driveRestoreLatest().then(function(parsed){
+            restoreBtn.disabled = false;
+            restoreBtn.textContent = "Restore latest backup";
+            if(!parsed || !Array.isArray(parsed.categories) || !Array.isArray(parsed.items)){
+              showToast("Backup file looks invalid");
+              return;
+            }
+            openConfirmModal({
+              title: "Restore from Drive?",
+              message: "This will replace everything currently on this device (" + data.categories.length + " categories, " + data.items.length + " reminders, " + (data.checklists||[]).length + " checklists) with the Drive backup (" + parsed.categories.length + " categories, " + parsed.items.length + " reminders). This cannot be undone.",
+              confirmLabel: "Replace",
+              danger: true,
+              onConfirm: function(){
+                data = {
+                  categories: parsed.categories,
+                  items: parsed.items,
+                  checklists: Array.isArray(parsed.checklists) ? parsed.checklists : [],
+                  checklistItems: Array.isArray(parsed.checklistItems) ? parsed.checklistItems : [],
+                  collapsed: {}
+                };
+                persistLocal();
+                render();
+                showToast("Restored from Drive");
+                closeModal();
+              }
+            });
+          }).catch(function(err){
+            restoreBtn.disabled = false;
+            restoreBtn.textContent = "Restore latest backup";
+            showToast(err.message || "Restore failed");
+          });
+        });
+        row.appendChild(restoreBtn);
+
+        var signOutBtn = document.createElement("button");
+        signOutBtn.className = "drive-btn secondary";
+        signOutBtn.textContent = "Sign out";
+        signOutBtn.addEventListener("click", function(){
+          driveAccessToken = null;
+          renderDrivePanel();
+        });
+        row.appendChild(signOutBtn);
+      }
+
+      modalBody.appendChild(row);
+    }
+
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "btn-cancel";
+    closeBtn.textContent = "Close";
+    closeBtn.onclick = closeModal;
+    modalFooter.appendChild(closeBtn);
+
+    modalOverlay.classList.add("open");
+  }
+
+  var driveBtnEl = document.getElementById("driveBtn");
+  if(driveBtnEl) driveBtnEl.addEventListener("click", function(){
+    driveShowIdInput = false;
+    renderDrivePanel();
+  });
+
+  // ---------- Offline support (service worker) ----------
+  if("serviceWorker" in navigator){
+    window.addEventListener("load", function(){
+      navigator.serviceWorker.register("./sw.js").catch(function(err){
+        // Fails silently on file:// or unsupported hosting — app still works online.
+        console.warn("Service worker registration failed:", err);
+      });
+    });
+  }
 
   // init
   render();
