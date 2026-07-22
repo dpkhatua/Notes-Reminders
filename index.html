@@ -107,6 +107,25 @@
 
   .empty-hint{font-size:12.5px;color:var(--muted);padding:6px 4px;font-style:italic;}
 
+  .banner{
+    background:#fff6e9;border:1px solid #f0d9a8;border-radius:12px;
+    padding:10px 12px;margin-bottom:14px;
+  }
+  .banner-title{font-size:12.5px;font-weight:700;color:#8a5b12;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;}
+  .banner-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:13.5px;border-top:1px solid #f0d9a8;}
+  .banner-row:first-of-type{border-top:none;}
+  .banner-row .b-what{color:var(--ink);}
+  .banner-row .b-cat{color:var(--muted);font-size:12px;}
+  .banner-row .b-due{white-space:nowrap;font-weight:600;font-size:12.5px;}
+  .b-due.due-overdue{color:var(--danger);}
+  .b-due.due-soon{color:#8a5b12;}
+
+  .item-note{font-size:12.5px;color:var(--muted);margin-top:2px;font-style:italic;}
+  .item-deadline{font-size:11.5px;font-weight:600;margin-top:2px;display:inline-block;}
+  .item-deadline.due-overdue{color:var(--danger);}
+  .item-deadline.due-soon{color:#8a5b12;}
+  .item-deadline.due-later{color:var(--muted);font-weight:normal;}
+
   .section-header{display:flex;align-items:center;justify-content:space-between;margin:26px 0 4px;}
   .section-header h2{font-size:13px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
   .section-sub{font-size:12.5px;color:var(--muted);margin-bottom:12px;}
@@ -173,11 +192,18 @@
     </div>
   </header>
 
+  <div id="deadlineBanner"></div>
+
   <form class="add-form" id="addForm">
     <input type="text" id="itemText" placeholder="New reminder or note…" required>
     <select id="itemCategory"></select>
     <button type="submit">Add</button>
   </form>
+  <button type="button" class="drive-link" id="toggleDetailsBtn" style="margin:-6px 0 12px;">+ Add note / deadline</button>
+  <div class="add-form" id="detailsRow" style="display:none;">
+    <input type="text" id="itemNote" placeholder="Optional note">
+    <input type="date" id="itemDeadline" style="flex:1;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:var(--card);color:var(--ink);">
+  </div>
 
   <div class="toolbar">
     <button class="icon-btn" id="addCategoryBtn">+ New Category</button>
@@ -319,6 +345,9 @@
           opt.textContent = o.text;
           el.appendChild(opt);
         });
+      } else if(f.type === "date"){
+        el = document.createElement("input");
+        el.type = "date";
       } else {
         el = document.createElement("input");
         el.type = "text";
@@ -396,12 +425,14 @@
   }
 
   // ---------- Actions ----------
-  function addItem(text, categoryId){
+  function addItem(text, categoryId, note, deadline){
     text = (text || "").trim();
     if(!text || !categoryId) return;
     data.items.push({
       id: uid("item"),
       text: text,
+      note: (note || "").trim(),
+      deadline: deadline || null,
       categoryId: categoryId,
       createdAt: new Date().toISOString(),
       completed: false,
@@ -409,6 +440,27 @@
     });
     dataChanged();
     render();
+  }
+
+  function daysUntilDeadline(deadline){
+    if(!deadline) return null;
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+    var d = new Date(deadline + "T00:00:00");
+    return Math.round((d - today) / 86400000);
+  }
+
+  function deadlineLabel(diff){
+    if(diff < 0) return "Overdue by " + Math.abs(diff) + " day" + (Math.abs(diff) === 1 ? "" : "s");
+    if(diff === 0) return "Due today";
+    if(diff === 1) return "Due tomorrow";
+    return "Due in " + diff + " days";
+  }
+
+  function deadlineUrgencyClass(diff){
+    if(diff < 0) return "due-overdue";
+    if(diff <= 5) return "due-soon";
+    return "due-later";
   }
 
   function toggleComplete(itemId, completed){
@@ -526,6 +578,28 @@
     var txt = document.createElement("div");
     txt.className = "item-text";
     txt.textContent = item.text;
+    main.appendChild(txt);
+
+    if(item.note){
+      var noteEl = document.createElement("div");
+      noteEl.className = "item-note";
+      noteEl.textContent = item.note;
+      main.appendChild(noteEl);
+    }
+
+    if(item.deadline && !isCompleted){
+      var diff = daysUntilDeadline(item.deadline);
+      var dl = document.createElement("div");
+      dl.className = "item-deadline " + deadlineUrgencyClass(diff);
+      dl.textContent = "📅 " + deadlineLabel(diff) + " (" + item.deadline + ")";
+      main.appendChild(dl);
+    } else if(item.deadline && isCompleted){
+      var dl2 = document.createElement("div");
+      dl2.className = "item-deadline due-later";
+      dl2.textContent = "📅 Was due " + item.deadline;
+      main.appendChild(dl2);
+    }
+
     var meta = document.createElement("div");
     meta.className = "item-meta";
     if(isCompleted){
@@ -533,7 +607,6 @@
     } else {
       meta.textContent = "Created " + formatDate(item.createdAt);
     }
-    main.appendChild(txt);
     main.appendChild(meta);
 
     var del = document.createElement("button");
@@ -554,6 +627,49 @@
     li.appendChild(main);
     li.appendChild(del);
     return li;
+  }
+
+  function renderDeadlineBanner(){
+    var container = document.getElementById("deadlineBanner");
+    container.innerHTML = "";
+    var upcoming = data.items
+      .filter(function(it){ return !it.completed && it.deadline; })
+      .map(function(it){ return {item: it, diff: daysUntilDeadline(it.deadline)}; })
+      .filter(function(x){ return x.diff <= 5; })
+      .sort(function(a, b){ return a.diff - b.diff; });
+
+    if(!upcoming.length) return;
+
+    var box = document.createElement("div");
+    box.className = "banner";
+    var title = document.createElement("div");
+    title.className = "banner-title";
+    title.textContent = "⏰ Upcoming & overdue (within 5 days)";
+    box.appendChild(title);
+
+    upcoming.forEach(function(x){
+      var row = document.createElement("div");
+      row.className = "banner-row";
+      var left = document.createElement("div");
+      var what = document.createElement("div");
+      what.className = "b-what";
+      what.textContent = x.item.text;
+      var cat = document.createElement("div");
+      cat.className = "b-cat";
+      cat.textContent = getCategoryPath(x.item.categoryId);
+      left.appendChild(what);
+      left.appendChild(cat);
+
+      var due = document.createElement("div");
+      due.className = "b-due " + deadlineUrgencyClass(x.diff);
+      due.textContent = deadlineLabel(x.diff);
+
+      row.appendChild(left);
+      row.appendChild(due);
+      box.appendChild(row);
+    });
+
+    container.appendChild(box);
   }
 
   function renderCategoryNode(cat, depth){
@@ -591,11 +707,15 @@
       e.stopPropagation();
       openFormModal({
         title: "Add to " + cat.name,
-        fields: [{id:"text", label:"Reminder / note", placeholder:"What do you need to remember?"}],
+        fields: [
+          {id:"text", label:"Reminder / note", placeholder:"What do you need to remember?"},
+          {id:"note", label:"Extra note (optional)", placeholder:"Any extra detail"},
+          {id:"deadline", label:"Deadline (optional)", type:"date"}
+        ],
         confirmLabel: "Add",
         onConfirm: function(v){
           if(!v.text || !v.text.trim()) return;
-          addItem(v.text, cat.id);
+          addItem(v.text, cat.id, v.note, v.deadline || null);
           closeModal();
         }
       });
@@ -903,6 +1023,7 @@
   }
 
   function render(){
+    renderDeadlineBanner();
     var tree = document.getElementById("categoryTree");
     tree.innerHTML = "";
     getChildren(null).forEach(function(cat){
@@ -928,13 +1049,24 @@
     e.preventDefault();
     var textEl = document.getElementById("itemText");
     var catEl = document.getElementById("itemCategory");
+    var noteEl = document.getElementById("itemNote");
+    var deadlineEl = document.getElementById("itemDeadline");
     if(!catEl.value){
       showToast("Create a category first");
       return;
     }
-    addItem(textEl.value, catEl.value);
+    addItem(textEl.value, catEl.value, noteEl.value, deadlineEl.value || null);
     textEl.value = "";
+    noteEl.value = "";
+    deadlineEl.value = "";
     textEl.focus();
+  });
+
+  document.getElementById("toggleDetailsBtn").addEventListener("click", function(){
+    var row = document.getElementById("detailsRow");
+    var open = row.style.display !== "none";
+    row.style.display = open ? "none" : "flex";
+    this.textContent = open ? "+ Add note / deadline" : "− Hide note / deadline";
   });
 
   document.getElementById("addCategoryBtn").addEventListener("click", function(){
@@ -1083,12 +1215,14 @@
   }
 
   function buildCSV(){
-    var rows = [["Section", "Category / Checklist", "Item", "Status", "Created At", "Completed At"]];
+    var rows = [["Section", "Category / Checklist", "Item", "Note", "Deadline", "Status", "Created At", "Completed At"]];
     data.items.forEach(function(it){
       rows.push([
         "Reminder",
         getCategoryPath(it.categoryId),
         it.text,
+        it.note || "",
+        it.deadline || "",
         it.completed ? "Completed" : "Active",
         formatDate(it.createdAt),
         it.completed ? formatDate(it.completedAt) : ""
@@ -1100,6 +1234,8 @@
         "Checklist",
         cl ? cl.name : "",
         it.text,
+        "",
+        "",
         it.checked ? "Checked" : "Unchecked",
         "",
         ""
