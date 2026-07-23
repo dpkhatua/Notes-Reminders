@@ -42,17 +42,22 @@
   }
   .icon-btn:active{background:var(--accent-soft);}
 
-  form.add-form{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
-  form.add-form input[type=text]{
+  .add-form{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  .add-form input[type=text]{
     flex:1 1 100%;
     padding:12px 14px;border:1px solid var(--border);border-radius:10px;
     font-size:15px;background:var(--card);color:var(--ink);
   }
-  form.add-form select{
+  .add-form input[type=date]{
+    flex:1 1 auto;min-width:150px;
+    padding:12px 14px;border:1px solid var(--border);border-radius:10px;
+    font-size:14.5px;background:var(--card);color:var(--ink);
+  }
+  .add-form select{
     flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;
     font-size:14px;background:var(--card);color:var(--ink);
   }
-  form.add-form button{
+  .add-form button{
     background:var(--accent);color:#fff;border:none;padding:10px 16px;
     border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;
   }
@@ -95,6 +100,8 @@
   .item-main{flex:1;min-width:0;}
   .item-text{font-size:14.5px;word-break:break-word;}
   .item-meta{font-size:11px;color:var(--muted);margin-top:2px;}
+  .item-edit{background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:2px 6px;}
+  .item-edit:active{color:var(--accent);}
   .item-del{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:2px 6px;}
   .item-del:active{color:var(--danger);}
   .completed .item-text{text-decoration:line-through;color:var(--muted);}
@@ -150,9 +157,10 @@
   }
   @keyframes slideup{from{transform:translateY(30px);opacity:0;}to{transform:translateY(0);opacity:1;}}
   .modal-title{font-size:16px;font-weight:700;margin-bottom:12px;}
-  .modal-body input[type=text], .modal-body select{
+  .modal-body input[type=text], .modal-body input[type=date], .modal-body select{
     width:100%;padding:12px 14px;border:1px solid var(--border);border-radius:10px;
     font-size:15px;margin-bottom:10px;background:var(--bg);color:var(--ink);
+    box-sizing:border-box;
   }
   .modal-msg{font-size:14px;color:var(--ink);margin-bottom:14px;line-height:1.4;}
   .modal-footer{display:flex;gap:8px;justify-content:flex-end;}
@@ -202,7 +210,7 @@
   <button type="button" class="drive-link" id="toggleDetailsBtn" style="margin:-6px 0 12px;">+ Add note / deadline</button>
   <div class="add-form" id="detailsRow" style="display:none;">
     <input type="text" id="itemNote" placeholder="Optional note">
-    <input type="date" id="itemDeadline" style="flex:1;padding:12px 14px;border:1px solid var(--border);border-radius:10px;font-size:14px;background:var(--card);color:var(--ink);">
+    <input type="date" id="itemDeadline">
   </div>
 
   <div class="toolbar">
@@ -348,6 +356,7 @@
       } else if(f.type === "date"){
         el = document.createElement("input");
         el.type = "date";
+        if(f.value) el.value = f.value;
       } else {
         el = document.createElement("input");
         el.type = "text";
@@ -461,6 +470,18 @@
     if(diff < 0) return "due-overdue";
     if(diff <= 5) return "due-soon";
     return "due-later";
+  }
+
+  function editItem(itemId, text, note, deadline){
+    var it = data.items.find(function(i){ return i.id === itemId; });
+    if(!it) return;
+    text = (text || "").trim();
+    if(!text) return;
+    it.text = text;
+    it.note = (note || "").trim();
+    it.deadline = deadline || null;
+    dataChanged();
+    render();
   }
 
   function toggleComplete(itemId, completed){
@@ -609,6 +630,27 @@
     }
     main.appendChild(meta);
 
+    var editBtn = document.createElement("button");
+    editBtn.className = "item-edit";
+    editBtn.textContent = "✎";
+    editBtn.title = "Edit";
+    editBtn.addEventListener("click", function(){
+      openFormModal({
+        title: "Edit reminder",
+        fields: [
+          {id:"text", label:"Reminder / note", value: item.text},
+          {id:"note", label:"Extra note (optional)", value: item.note || "", placeholder:"Any extra detail"},
+          {id:"deadline", label:"Deadline (optional)", type:"date", value: item.deadline || ""}
+        ],
+        confirmLabel: "Save",
+        onConfirm: function(v){
+          if(!v.text || !v.text.trim()) return;
+          editItem(item.id, v.text, v.note, v.deadline || null);
+          closeModal();
+        }
+      });
+    });
+
     var del = document.createElement("button");
     del.className = "item-del";
     del.textContent = "×";
@@ -625,6 +667,7 @@
 
     li.appendChild(chk);
     li.appendChild(main);
+    li.appendChild(editBtn);
     li.appendChild(del);
     return li;
   }
